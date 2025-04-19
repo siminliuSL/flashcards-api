@@ -1,101 +1,87 @@
-from fastapi import FastAPI
+import logging
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List
 import random
 import os
+from dotenv import load_dotenv
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Load environment variables
+load_dotenv()
 
 app = FastAPI()
 
 # Enable CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # Frontend URL
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Get the absolute path to the assets directory
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-ASSETS_DIR = os.path.join(BASE_DIR, "assets")
+class Choice(BaseModel):
+    word: str
+    imageUrl: str
 
-# Mount static files directory
-app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
-
-# Models
 class Word(BaseModel):
     id: int
     word: str
     audioUrl: str
-    images: List[str]
+    choices: List[Choice]
     correctIndex: int
 
-class AnswerCheck(BaseModel):
-    isCorrect: bool
-    correctIndex: int
-
+# Sample words with environment variable URLs
 words = [
-    {
-        "id": 1,
-        "word": "coffee",
-        "audioUrl": "/assets/audio/coffee.mp3",
-        "images": [
-            "/assets/images/coffee.svg",
-            "/assets/images/coffee.svg",
-            "/assets/images/coffee.svg"
+    Word(
+        id=1,
+        word="咖啡",  # coffee
+        audioUrl=f"{os.getenv('AUDIO_URL')}/coffee.mp3",
+        choices=[
+            Choice(word="coffee", imageUrl=f"{os.getenv('IMAGE_URL')}/coffee.jpg"),
+            Choice(word="tea", imageUrl=f"{os.getenv('IMAGE_URL')}/tea.jpg"),
+            Choice(word="milk", imageUrl=f"{os.getenv('IMAGE_URL')}/milk.jpg")
         ],
-        "correctIndex": 0
-    },
-    {
-        "id": 2,
-        "word": "banana",
-        "audioUrl": "https://upload.wikimedia.org/wikipedia/commons/3/3c/En-uk-banana.ogg",
-        "images": [
-            "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8a/Banana-Single.jpg/320px-Banana-Single.jpg",
-            "https://upload.wikimedia.org/wikipedia/commons/thumb/1/15/Red_Apple.jpg/265px-Red_Apple.jpg",
-            "https://upload.wikimedia.org/wikipedia/commons/thumb/7/7b/Orange-Whole-%26-Split.jpg/320px-Orange-Whole-%26-Split.jpg"
+        correctIndex=0
+    ),
+    Word(
+        id=2,
+        word="茶",  # tea
+        audioUrl=f"{os.getenv('AUDIO_URL')}/tea-zh.mp3",
+        choices=[
+            Choice(word="milk", imageUrl=f"{os.getenv('IMAGE_URL')}/milk.jpg"),
+            Choice(word="tea", imageUrl=f"{os.getenv('IMAGE_URL')}/tea.jpg"),
+            Choice(word="coffee", imageUrl=f"{os.getenv('IMAGE_URL')}/coffee.jpg")
         ],
-        "correctIndex": 0
-    },
-    {
-        "id": 3,
-        "word": "orange",
-        "audioUrl": "https://upload.wikimedia.org/wikipedia/commons/3/3c/En-uk-orange.ogg",
-        "images": [
-            "https://upload.wikimedia.org/wikipedia/commons/thumb/7/7b/Orange-Whole-%26-Split.jpg/320px-Orange-Whole-%26-Split.jpg",
-            "https://upload.wikimedia.org/wikipedia/commons/thumb/1/15/Red_Apple.jpg/265px-Red_Apple.jpg",
-            "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8a/Banana-Single.jpg/320px-Banana-Single.jpg"
-        ],
-        "correctIndex": 0
-    }
+        correctIndex=1
+    )
 ]
 
-@app.get("/api/v1/words/random", response_model=Word)
+@app.get("/api/v1/words/random")
 async def get_random_word():
-    return random.choice(words)
+    logger.info("Getting random word")
+    word = random.choice(words)
+    logger.info(f"Selected word: {word.word}")
+    logger.info(f"Audio URL: {word.audioUrl}")
+    return word
 
-@app.post("/api/v1/words/check/{word_id}/{choice_index}", response_model=AnswerCheck)
-async def check_answer(word_id: int, choice_index: int):
-    word = next((w for w in words if w["id"] == word_id), None)
+@app.post("/api/v1/words/check/{word_id}/{choice_index}")
+async def check_word(word_id: int, choice_index: int):
+    logger.info(f"Checking word {word_id} with choice {choice_index}")
+    word = next((w for w in words if w.id == word_id), None)
     if not word:
-        return {"error": "Word not found"}
+        logger.error(f"Word {word_id} not found")
+        raise HTTPException(status_code=404, detail="Word not found")
     
-    is_correct = choice_index == word["correctIndex"]
-    return {
-        "isCorrect": is_correct,
-        "correctIndex": word["correctIndex"]
-    }
+    is_correct = choice_index == word.correctIndex
+    logger.info(f"Word {word.word} check result: {'correct' if is_correct else 'incorrect'}")
+    return {"correct": is_correct}
 
-@app.get("/audio/{filename}")
-async def get_audio(filename: str):
-    audio_path = os.path.join(ASSETS_DIR, "audio", filename)
-    if not os.path.exists(audio_path):
-        return {"error": "Audio file not found"}
-    return FileResponse(audio_path, media_type="audio/mpeg")
-    
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000) 
